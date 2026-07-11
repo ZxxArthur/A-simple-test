@@ -9,18 +9,19 @@ const rootDir = __dirname;
 const cacheDir = path.join(rootDir, '.word-memory-cache');
 const stateFile = path.join(cacheDir, 'local-state.json');
 const args = parseArgs(process.argv.slice(2));
-const defaultExcelFile = path.resolve(args.excel || process.env.VOCAB_EXCEL_FILE || path.join(rootDir, 'Vocabulary.xlsx'));
+const defaultExcelFile = args.excel || process.env.VOCAB_EXCEL_FILE ? path.resolve(args.excel || process.env.VOCAB_EXCEL_FILE) : '';
 const selectedExcelFile = path.join(cacheDir, 'selected-workbook.xlsx');
 const selectedExcelMetaFile = path.join(cacheDir, 'selected-workbook.json');
 const host = '127.0.0.1';
 const startPort = Number(args.port || process.env.VOCAB_PORT || 3765);
+const defaultOnly = args['default-only'] === true || process.env.VOCAB_DEFAULT_EXCEL_ONLY === '1';
 
 function parseArgs(values) {
   const parsed = {};
   for (let index = 0; index < values.length; index += 1) {
     const value = values[index];
-    if (value === '--open') {
-      parsed.open = true;
+    if (value === '--open' || value === '--default-only') {
+      parsed[value.slice(2)] = true;
     } else if (value.startsWith('--')) {
       parsed[value.slice(2)] = values[index + 1];
       index += 1;
@@ -79,7 +80,7 @@ function loadWorkbook() {
 
 function getActiveExcel() {
   const selectedMeta = readJson(selectedExcelMetaFile, {});
-  if (fs.existsSync(selectedExcelFile)) {
+  if (!defaultOnly && fs.existsSync(selectedExcelFile)) {
     return {
       filePath: selectedExcelFile,
       displayName: selectedMeta.originalName ? selectedMeta.originalName + '（自定义文件）' : selectedExcelFile
@@ -92,6 +93,9 @@ function getActiveExcel() {
 }
 
 function buildWorkbook(excelFile, displayName) {
+  if (!excelFile) {
+    throw new Error('请选择xlsx文件');
+  }
   if (!fs.existsSync(excelFile)) {
     throw new Error('未找到Excel文件：' + excelFile);
   }
@@ -99,8 +103,8 @@ function buildWorkbook(excelFile, displayName) {
   let totalRows;
   let summaryRows;
   if (workbook.sheets['单词总表'] && workbook.sheets['八年级上下册英语全单词汇总']) {
-    validateHeaders(workbook.sheets['单词总表'], ['单元', '单词', '词性和中文意思'], '单词总表');
-    validateHeaders(workbook.sheets['八年级上下册英语全单词汇总'], ['单词', '音标', '词性', '中文意思'], '八年级上下册英语全单词汇总');
+    validateHeaders(workbook.sheets['单词总表'], ['Day', '序号', '单词', '中文意思'], '单词总表');
+    validateHeaders(workbook.sheets['八年级上下册英语全单词汇总'], ['单元', '序号', '单词', '音标', '词性', '中文意思', 'Page', '总表里有'], '八年级上下册英语全单词汇总');
     totalRows = parseTotalRows(workbook.sheets['单词总表']);
     summaryRows = parseSummaryRows(workbook.sheets['八年级上下册英语全单词汇总']);
   } else {
@@ -306,8 +310,8 @@ function validateHeaders(rows, expectedHeaders, sheetName) {
 function parseTotalRows(rows) {
   return rows.slice(1).map((row) => ({
     unit: normalize(row[0]),
-    word: normalizeWord(row[1]),
-    combinedMeaning: normalize(row[2])
+    word: normalizeWord(row[2]),
+    combinedMeaning: normalize(row[3])
   })).filter((row) => row.word);
 }
 
@@ -318,9 +322,9 @@ function validateSimpleHeaders(rows) {
   const meaningHeader = normalize(headers[3]).toLowerCase();
   const validUnit = unitHeader === 'day' || headers[0] === '单元';
   const validWord = wordHeader === 'english word' || headers[2] === '英文单词' || headers[2] === '单词';
-  const validMeaning = wordHeader === 'word' || meaningHeader === 'chinese meaning' || headers[3] === '中文释义' || headers[3] === '中文意思';
+  const validMeaning = meaningHeader === 'chinese meaning' || headers[3] === '中文释义' || headers[3] === '中文意思';
   if (!validUnit || !validWord || !validMeaning) {
-    throw new Error('文件格式错误：单表格式表头需包含 Day、英文单词、中文释义');
+    throw new Error('文件格式错误：单表格式表头需包含 Day、序号、单词、中文意思');
   }
 }
 
@@ -334,11 +338,11 @@ function parseSimpleRows(rows) {
 
 function parseSummaryRows(rows) {
   return rows.slice(1).map((row) => ({
-    word: normalizeWord(row[0]),
-    phonetic: normalize(row[1]),
-    partOfSpeech: normalize(row[2]),
-    meaning: normalize(row[3]),
-    unit: normalize(row[4])
+    unit: normalize(row[0]),
+    word: normalizeWord(row[2]),
+    phonetic: normalize(row[3]),
+    partOfSpeech: normalize(row[4]),
+    meaning: normalize(row[5])
   })).filter((row) => row.word);
 }
 
@@ -350,6 +354,7 @@ function mergeWords(totalRows, summaryRows) {
     existing.fromTotal = true;
     if (!existing.partOfSpeech && !existing.meaning && row.combinedMeaning) {
       const parts = splitCombinedMeaning(row.combinedMeaning);
+      existing.phonetic = parts.phonetic;
       existing.partOfSpeech = parts.partOfSpeech;
       existing.meaning = parts.meaning;
     }
@@ -377,10 +382,14 @@ function mergeWords(totalRows, summaryRows) {
 
 function splitCombinedMeaning(value) {
   const text = normalize(value);
-  const partMatches = text.match(/\b(?:n|v|adj|adv|prep|pron|conj|int|num|art|aux|vi|vt|abbr|det|interj|pl|sing)\./gi) || [];
+  const phoneticMatch = text.match(/(?:\/[^\/]+\/|\[[^\]]+\])/);
+  const phonetic = phoneticMatch ? phoneticMatch[0] : '';
+  const textWithoutPhonetic = phonetic ? text.replace(phonetic, '').trim() : text;
+  const partMatches = textWithoutPhonetic.match(/\b(?:n|v|adj|adv|prep|pron|conj|int|num|art|aux|vi|vt|abbr|det|interj)\./gi) || [];
   const partOfSpeech = Array.from(new Set(partMatches.map((item) => item.toLowerCase()))).join(' ');
-  const meaning = partMatches.length ? text.replace(/\b(?:n|v|adj|adv|prep|pron|conj|int|num|art|aux|vi|vt|abbr|det|interj|pl|sing)\./gi, '').replace(/\s+/g, ' ').trim() : text;
+  const meaning = partMatches.length ? textWithoutPhonetic.replace(/\b(?:n|v|adj|adv|prep|pron|conj|int|num|art|aux|vi|vt|abbr|det|interj)\./gi, '').replace(/\s+/g, ' ').trim() : textWithoutPhonetic;
   return {
+    phonetic,
     partOfSpeech,
     meaning: meaning || text
   };
@@ -557,8 +566,12 @@ const server = http.createServer(async (request, response) => {
       return;
     }
     if (request.method === 'GET' && parsedUrl.pathname === '/api/state') {
-      const workbook = loadWorkbook();
-      sendJson(response, 200, ensureFirstUnselected(workbook.words));
+      try {
+        const workbook = loadWorkbook();
+        sendJson(response, 200, ensureFirstUnselected(workbook.words));
+      } catch (error) {
+        sendJson(response, 200, loadState());
+      }
       return;
     }
     if (request.method === 'POST' && parsedUrl.pathname === '/api/state') {
@@ -583,7 +596,7 @@ function listen(port) {
   server.listen(port, host, () => {
     const address = `http://${host}:${port}/`;
     console.log('背单词工具已启动：' + address);
-    console.log('默认Excel文件：' + defaultExcelFile);
+    console.log(defaultExcelFile ? '指定Excel文件：' + defaultExcelFile : '未指定默认Excel文件，请在页面选择xlsx文件');
     if (args.open) {
       const opener = process.platform === 'win32' ? 'start' : process.platform === 'darwin' ? 'open' : 'xdg-open';
       childProcess.exec(`${opener} "" "${address}"`);

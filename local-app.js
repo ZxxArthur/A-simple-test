@@ -7,6 +7,7 @@ const selectOptions = [20, 30, 40, 50, 60, 70, 80, 90, 100];
 const appRoot = document.getElementById('app');
 const state = {
   workbook: null,
+  workbookError: '',
   persisted: null,
   currentWords: [],
   currentMode: '',
@@ -18,17 +19,32 @@ const state = {
 document.addEventListener('DOMContentLoaded', initApp);
 
 async function initApp() {
+  state.persisted = await loadPersistedState();
   try {
-    const [workbook, persisted] = await Promise.all([
-      apiGet('/api/workbook'),
-      apiGet('/api/state')
-    ]);
-    state.workbook = workbook;
-    state.persisted = persisted;
-    renderHomePage();
+    state.workbook = await apiGet('/api/workbook');
+    state.workbookError = '';
   } catch (error) {
-    renderErrorPage(error.message);
+    state.workbook = null;
+    state.workbookError = error.message;
   }
+  renderHomePage();
+}
+
+async function loadPersistedState() {
+  try {
+    return await apiGet('/api/state');
+  } catch (error) {
+    return createDefaultPersistedState();
+  }
+}
+
+function createDefaultPersistedState() {
+  return {
+    wordWeightMap: {},
+    wordKnowRecord: {},
+    wordFirstUnselected: {},
+    lastSelectNum: 50
+  };
 }
 
 async function apiGet(path) {
@@ -59,7 +75,9 @@ function renderHomePage() {
   state.revealedUnknown = false;
   state.roundKnown = {};
 
-  const lastSelectNum = Number(state.persisted.lastSelectNum) || 50;
+  const lastSelectNum = Number((state.persisted || {}).lastSelectNum) || 50;
+  const hasWorkbook = Boolean(state.workbook);
+  const fileText = hasWorkbook ? state.workbook.filePath : (state.workbookError || '请选择xlsx文件');
   appRoot.innerHTML = `
     <h1 class="page-title">背单词工具</h1>
     <section class="section">
@@ -68,15 +86,16 @@ function renderHomePage() {
         <input id="excelFileInput" type="file" accept=".xlsx" hidden>
         <button id="chooseExcelButton" class="primary-button" type="button">选择xlsx文件</button>
         <button id="reloadButton" class="secondary-button" type="button">刷新页面</button>
-        <span class="path-text">${escapeHtml(state.workbook.filePath || 'Vocabulary.xlsx')}</span>
+        <span class="path-text">${escapeHtml(fileText)}</span>
       </div>
+      ${hasWorkbook ? '' : '<div class="empty-state">未加载词库，请选择符合要求的 xlsx 文件。</div>'}
     </section>
     <section class="section">
       <h2 class="section-title">功能操作</h2>
       <div class="action-row">
         <select id="selectNum" class="select-input">${renderSelectOptions(lastSelectNum)}</select>
-        <button id="randomButton" class="primary-button" type="button">随机生成背诵</button>
-        <button id="unitButton" class="secondary-button" type="button">按单元选择生成单词</button>
+        <button id="randomButton" class="primary-button" type="button" ${hasWorkbook ? '' : 'disabled'}>随机生成背诵</button>
+        <button id="unitButton" class="secondary-button" type="button" ${hasWorkbook ? '' : 'disabled'}>按单元选择生成单词</button>
       </div>
     </section>
   `;
@@ -116,6 +135,7 @@ async function uploadExcelFile(event) {
       throw new Error(payload.error || 'Excel文件读取失败');
     }
     state.workbook = payload;
+    state.workbookError = '';
     state.persisted = await apiGet('/api/state');
     renderHomePage();
   } catch (error) {
@@ -128,6 +148,10 @@ async function uploadExcelFile(event) {
 }
 
 async function startRandomFlow() {
+  if (!state.workbook) {
+    alert('请先选择xlsx文件');
+    return;
+  }
   let selectNum = Number(document.getElementById('selectNum').value);
   state.persisted.lastSelectNum = selectNum;
 
@@ -150,6 +174,10 @@ async function startRandomFlow() {
 }
 
 function startUnitFlow() {
+  if (!state.workbook) {
+    alert('请先选择xlsx文件');
+    return;
+  }
   renderUnitPage();
 }
 
@@ -478,16 +506,6 @@ function renderCheckboxes(name, values) {
 
 function getCheckedValues(name) {
   return Array.from(document.querySelectorAll(`input[name="${name}"]:checked`)).map((input) => input.value);
-}
-
-function renderErrorPage(message) {
-  appRoot.innerHTML = `
-    <h1 class="page-title">背单词工具</h1>
-    <section class="section">
-      <h2 class="section-title">启动失败</h2>
-      <div class="empty-state">${escapeHtml(message)}</div>
-    </section>
-  `;
 }
 
 function escapeHtml(value) {

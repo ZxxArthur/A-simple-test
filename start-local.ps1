@@ -1,5 +1,5 @@
 param(
-  [string]$ExcelPath = (Join-Path $PSScriptRoot 'Vocabulary.xlsx'),
+  [string]$ExcelPath = '',
   [int]$Port = 3765
 )
 
@@ -13,4 +13,9 @@ if (-not (Test-Path $nodePath)) {
   $nodePath = $nodeCommand.Source
 }
 
-& $nodePath (Join-Path $PSScriptRoot 'server-local.js') --port $Port --excel $ExcelPath --open
+$serverArgs = @((Join-Path $PSScriptRoot 'server-local.js'), '--port', $Port, '--open')
+if ($ExcelPath) {
+  $serverArgs += @('--excel', $ExcelPath)
+}
+
+& $nodePath @serverArgs

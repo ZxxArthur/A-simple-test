@@ -7,7 +7,7 @@
     "install": "node -e \"console.log('dependencies installed')\"",
     "start": "electron .",
     "start:local": "node server-local.js --open",
-    "check": "node --check main.js && node --check excel-parser.js && node --check weight-calc.js && node --check storage.js && node --check page-render.js"
+    "check": "node --check main.js && node --check excel-parser.js && node --check weight-calc.js && node --check storage.js && node --check page-render.js && node --check server-local.js && node --check local-app.js"
   },
   "dependencies": {
     "electron": "^31.7.7",

@@ -2,8 +2,8 @@ const xlsx = require('node-xlsx');
 
 const TOTAL_SHEET_NAME = '单词总表';
 const SUMMARY_SHEET_NAME = '八年级上下册英语全单词汇总';
-const TOTAL_HEADERS = ['单元', '单词', '词性和中文意思'];
-const SUMMARY_HEADERS = ['单词', '音标', '词性', '中文意思'];
+const TOTAL_HEADERS = ['Day', '序号', '单词', '中文意思'];
+const SUMMARY_HEADERS = ['单元', '序号', '单词', '音标', '词性', '中文意思', 'Page', '总表里有'];
 
 function parseWorkbook(filePath) {
   let sheets;
@@ -55,18 +55,18 @@ function validateHeaders(data, expectedHeaders, sheetName) {
 function parseTotalRows(data) {
   return data.slice(1).map((row) => ({
     unit: normalize(row[0]),
-    word: normalizeWord(row[1]),
-    combinedMeaning: normalize(row[2])
+    word: normalizeWord(row[2]),
+    combinedMeaning: normalize(row[3])
   })).filter((row) => row.word);
 }
 
 function parseSummaryRows(data) {
   return data.slice(1).map((row) => ({
-    word: normalizeWord(row[0]),
-    phonetic: normalize(row[1]),
-    partOfSpeech: normalize(row[2]),
-    meaning: normalize(row[3]),
-    unit: normalize(row[4])
+    unit: normalize(row[0]),
+    word: normalizeWord(row[2]),
+    phonetic: normalize(row[3]),
+    partOfSpeech: normalize(row[4]),
+    meaning: normalize(row[5])
   })).filter((row) => row.word);
 }
 
@@ -78,7 +78,10 @@ function mergeWords(totalRows, summaryRows) {
     existing.unitsFromTotal.add(row.unit);
     existing.fromTotal = true;
     if (!existing.partOfSpeech && !existing.meaning && row.combinedMeaning) {
-      existing.meaning = row.combinedMeaning;
+      const parts = splitCombinedMeaning(row.combinedMeaning);
+      existing.phonetic = parts.phonetic;
+      existing.partOfSpeech = parts.partOfSpeech;
+      existing.meaning = parts.meaning;
     }
     wordMap.set(row.word, existing);
   });
@@ -118,6 +121,21 @@ function createWord(word) {
     unitsFromSummary: new Set(),
     fromTotal: false,
     fromSummary: false
+  };
+}
+
+function splitCombinedMeaning(value) {
+  const text = normalize(value);
+  const phoneticMatch = text.match(/(?:\/[^\/]+\/|\[[^\]]+\])/);
+  const phonetic = phoneticMatch ? phoneticMatch[0] : '';
+  const textWithoutPhonetic = phonetic ? text.replace(phonetic, '').trim() : text;
+  const partMatches = textWithoutPhonetic.match(/\b(?:n|v|adj|adv|prep|pron|conj|int|num|art|aux|vi|vt|abbr|det|interj)\./gi) || [];
+  const partOfSpeech = Array.from(new Set(partMatches.map((item) => item.toLowerCase()))).join(' ');
+  const meaning = partMatches.length ? textWithoutPhonetic.replace(/\b(?:n|v|adj|adv|prep|pron|conj|int|num|art|aux|vi|vt|abbr|det|interj)\./gi, '').replace(/\s+/g, ' ').trim() : textWithoutPhonetic;
+  return {
+    phonetic,
+    partOfSpeech,
+    meaning: meaning || text
   };
 }
 
