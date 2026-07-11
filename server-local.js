@@ -102,15 +102,14 @@ function buildWorkbook(excelFile, displayName) {
   const workbook = parseXlsx(excelFile);
   let totalRows;
   let summaryRows;
-  if (workbook.sheets['单词总表'] && workbook.sheets['八年级上下册英语全单词汇总']) {
-    validateHeaders(workbook.sheets['单词总表'], ['Day', '序号', '单词', '中文意思'], '单词总表');
-    validateHeaders(workbook.sheets['八年级上下册英语全单词汇总'], ['单元', '序号', '单词', '音标', '词性', '中文意思', 'Page', '总表里有'], '八年级上下册英语全单词汇总');
-    totalRows = parseTotalRows(workbook.sheets['单词总表']);
-    summaryRows = parseSummaryRows(workbook.sheets['八年级上下册英语全单词汇总']);
+  const sheetEntries = getWorkbookSheetEntries(workbook);
+  if (sheetEntries.length >= 2) {
+    const selectedSheets = selectWorkbookSheets(sheetEntries);
+    totalRows = parseTotalRows(selectedSheets.total.rows, selectedSheets.total.totalMapping);
+    summaryRows = parseSummaryRows(selectedSheets.summary.rows, selectedSheets.summary.summaryMapping);
   } else {
-    const fallbackRows = getSingleSheetRows(workbook);
-    validateSimpleHeaders(fallbackRows);
-    totalRows = parseSimpleRows(fallbackRows);
+    const fallbackRows = sheetEntries[0] ? sheetEntries[0].rows : getSingleSheetRows(workbook);
+    totalRows = parseTotalRows(fallbackRows);
     summaryRows = [];
   }
 
@@ -135,6 +134,39 @@ function getSingleSheetRows(workbook) {
     throw new Error('文件格式错误：未找到支持的单词工作表');
   }
   return workbook.sheets[sheetNames[0]];
+}
+
+function getWorkbookSheetEntries(workbook) {
+  return Object.entries(workbook.sheets).map(([name, rows]) => {
+    const columnCount = getEffectiveColumnCount(rows);
+    return {
+      name,
+      rows,
+      columnCount,
+      totalMapping: inferSheetMapping(rows, 'total'),
+      summaryMapping: inferSheetMapping(rows, 'summary')
+    };
+  }).filter((entry) => entry.rows.length > 1 && entry.columnCount >= 3);
+}
+
+function selectWorkbookSheets(sheetEntries) {
+  const sortedByColumns = sheetEntries.slice().sort((left, right) => {
+    if (right.columnCount !== left.columnCount) {
+      return right.columnCount - left.columnCount;
+    }
+    return getSummaryHeaderScore(right.rows) - getSummaryHeaderScore(left.rows);
+  });
+  const summary = sortedByColumns[0];
+  const total = sortedByColumns.slice(1).sort((left, right) => {
+    if (left.columnCount !== right.columnCount) {
+      return left.columnCount - right.columnCount;
+    }
+    return getTotalHeaderScore(right.rows) - getTotalHeaderScore(left.rows);
+  })[0];
+  if (!total || !summary || total === summary) {
+    throw new Error('文件格式错误：未找到可识别的两张单词工作表');
+  }
+  return { total, summary };
 }
 
 function parseXlsx(filePath) {
@@ -298,52 +330,114 @@ function decodeXml(value) {
     .replace(/&amp;/g, '&');
 }
 
-function validateHeaders(rows, expectedHeaders, sheetName) {
+function parseTotalRows(rows, mapping = inferSheetMapping(rows, 'total')) {
+  const dataStart = hasHeaderRow(rows) ? 1 : 0;
+  return rows.slice(dataStart).map((row) => ({
+    unit: normalize(cell(row, mapping.unitIndex)),
+    word: normalizeWord(cell(row, mapping.wordIndex)),
+    combinedMeaning: normalize(cell(row, mapping.meaningIndex))
+  })).filter((row) => row.word);
+}
+
+function parseSummaryRows(rows, mapping = inferSheetMapping(rows, 'summary')) {
+  const dataStart = hasHeaderRow(rows) ? 1 : 0;
+  return rows.slice(dataStart).map((row) => ({
+    unit: normalize(cell(row, mapping.unitIndex)),
+    word: normalizeWord(cell(row, mapping.wordIndex)),
+    phonetic: normalize(cell(row, mapping.phoneticIndex)),
+    partOfSpeech: normalize(cell(row, mapping.partOfSpeechIndex)),
+    meaning: normalize(cell(row, mapping.meaningIndex))
+  })).filter((row) => row.word);
+}
+
+function inferSheetMapping(rows, role) {
   const headers = rows[0] || [];
-  expectedHeaders.forEach((header, index) => {
-    if (normalize(headers[index]) !== header) {
-      throw new Error('文件格式错误：「' + sheetName + '」表头必须依次为' + expectedHeaders.join('、'));
+  const columnCount = getEffectiveColumnCount(rows);
+  const unitIndex = findColumnIndex(headers, ['day', 'unit', '单元', '章节', '课时'], fallbackIndex(columnCount, 0));
+  const wordIndex = findColumnIndex(headers, ['单词', '英文', 'english', 'word', '词汇'], getWordFallbackIndex(columnCount));
+  const meaningIndex = findColumnIndex(headers, ['中文意思', '中文释义', '汉语意思', '意思', '释义', 'meaning', 'chinese'], getMeaningFallbackIndex(columnCount, role));
+  if (role === 'total') {
+    return { unitIndex, wordIndex, meaningIndex };
+  }
+  return {
+    unitIndex,
+    wordIndex,
+    phoneticIndex: findColumnIndex(headers, ['音标', 'phonetic', 'pronunciation'], fallbackIndex(columnCount, 3)),
+    partOfSpeechIndex: findColumnIndex(headers, ['词性', 'partofspeech', 'part of speech', 'pos'], fallbackIndex(columnCount, 4)),
+    meaningIndex
+  };
+}
+
+function getEffectiveColumnCount(rows) {
+  return rows.slice(0, 20).reduce((maxCount, row) => {
+    let lastValueIndex = -1;
+    row.forEach((value, index) => {
+      if (normalize(value)) {
+        lastValueIndex = index;
+      }
+    });
+    return Math.max(maxCount, lastValueIndex + 1);
+  }, 0);
+}
+
+function findColumnIndex(headers, names, fallback) {
+  const normalizedNames = names.map(normalizeHeader);
+  const index = headers.findIndex((header) => {
+    const normalizedHeader = normalizeHeader(header);
+    return normalizedHeader && normalizedNames.some((name) => normalizedHeader === name || normalizedHeader.includes(name));
+  });
+  return index >= 0 ? index : fallback;
+}
+
+function getWordFallbackIndex(columnCount) {
+  if (columnCount >= 4) {
+    return 2;
+  }
+  return fallbackIndex(columnCount, 1);
+}
+
+function getMeaningFallbackIndex(columnCount, role) {
+  if (role === 'summary') {
+    if (columnCount >= 6) {
+      return 5;
     }
+    if (columnCount >= 4) {
+      return 3;
+    }
+  }
+  if (columnCount >= 4) {
+    return 3;
+  }
+  return fallbackIndex(columnCount, 2);
+}
+
+function fallbackIndex(columnCount, index) {
+  return index >= 0 && index < columnCount ? index : -1;
+}
+
+function hasHeaderRow(rows) {
+  return (rows[0] || []).some((value) => {
+    const header = normalizeHeader(value);
+    return ['day', 'unit', 'word', 'english', 'meaning', 'chinese', 'phonetic', 'pronunciation', 'pos', '单元', '单词', '英文', '意思', '释义', '音标', '词性'].some((name) => header.includes(normalizeHeader(name)));
   });
 }
 
-function parseTotalRows(rows) {
-  return rows.slice(1).map((row) => ({
-    unit: normalize(row[0]),
-    word: normalizeWord(row[2]),
-    combinedMeaning: normalize(row[3])
-  })).filter((row) => row.word);
-}
-
-function validateSimpleHeaders(rows) {
+function getTotalHeaderScore(rows) {
   const headers = rows[0] || [];
-  const unitHeader = normalize(headers[0]).toLowerCase();
-  const wordHeader = normalize(headers[2]).toLowerCase();
-  const meaningHeader = normalize(headers[3]).toLowerCase();
-  const validUnit = unitHeader === 'day' || headers[0] === '单元';
-  const validWord = wordHeader === 'english word' || headers[2] === '英文单词' || headers[2] === '单词';
-  const validMeaning = meaningHeader === 'chinese meaning' || headers[3] === '中文释义' || headers[3] === '中文意思';
-  if (!validUnit || !validWord || !validMeaning) {
-    throw new Error('文件格式错误：单表格式表头需包含 Day、序号、单词、中文意思');
-  }
+  return ['day', '单元', '单词', 'word', '中文意思', '释义'].filter((name) => headers.some((header) => normalizeHeader(header).includes(normalizeHeader(name)))).length;
 }
 
-function parseSimpleRows(rows) {
-  return rows.slice(1).map((row) => ({
-    unit: normalize(row[0]),
-    word: normalizeWord(row[2]),
-    combinedMeaning: normalize(row[3])
-  })).filter((row) => row.word);
+function getSummaryHeaderScore(rows) {
+  const headers = rows[0] || [];
+  return ['音标', 'phonetic', '词性', 'pos', 'page', '总表里有'].filter((name) => headers.some((header) => normalizeHeader(header).includes(normalizeHeader(name)))).length;
 }
 
-function parseSummaryRows(rows) {
-  return rows.slice(1).map((row) => ({
-    unit: normalize(row[0]),
-    word: normalizeWord(row[2]),
-    phonetic: normalize(row[3]),
-    partOfSpeech: normalize(row[4]),
-    meaning: normalize(row[5])
-  })).filter((row) => row.word);
+function cell(row, index) {
+  return index >= 0 ? row[index] : '';
+}
+
+function normalizeHeader(value) {
+  return normalize(value).toLowerCase().replace(/[\s_\-()（）/]+/g, '');
 }
 
 function mergeWords(totalRows, summaryRows) {
