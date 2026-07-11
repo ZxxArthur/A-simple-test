@@ -1,0 +1,245 @@
+:root {
+  --paper: #f5f1e8;
+  --ink: #22201b;
+  --muted: #756f63;
+  --line: #d8cdbc;
+  --panel: #fffaf0;
+  --accent: #1f6f64;
+  --accent-strong: #144b44;
+  --danger: #b43a2f;
+  --button-text: #ffffff;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  color: var(--ink);
+  background:
+    linear-gradient(135deg, rgba(31, 111, 100, 0.08), transparent 34%),
+    linear-gradient(315deg, rgba(180, 58, 47, 0.08), transparent 38%),
+    var(--paper);
+  font-family: "Microsoft YaHei", "Noto Sans SC", sans-serif;
+}
+
+button,
+select,
+input {
+  font: inherit;
+}
+
+.app-shell {
+  width: min(980px, calc(100vw - 48px));
+  min-height: calc(100vh - 48px);
+  margin: 24px auto;
+  padding: 32px;
+  background: rgba(255, 250, 240, 0.9);
+  border: 1px solid var(--line);
+  box-shadow: 0 18px 48px rgba(52, 43, 31, 0.12);
+}
+
+.page-title {
+  margin: 0 0 28px;
+  font-size: 30px;
+  font-weight: 800;
+}
+
+.section {
+  margin-bottom: 28px;
+  padding: 22px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.48);
+}
+
+.section-title {
+  margin: 0 0 14px;
+  font-size: 18px;
+}
+
+.file-row,
+.action-row,
+.mode-row,
+.bottom-actions {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+
+.path-text {
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.primary-button,
+.secondary-button,
+.danger-button {
+  min-height: 42px;
+  border: 0;
+  padding: 0 18px;
+  color: var(--button-text);
+  background: var(--accent);
+  cursor: pointer;
+}
+
+.primary-button:hover,
+.secondary-button:hover {
+  background: var(--accent-strong);
+}
+
+.secondary-button {
+  background: #6b604f;
+}
+
+.danger-button {
+  background: var(--danger);
+}
+
+.primary-button:disabled,
+.secondary-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.48;
+}
+
+.select-input {
+  min-height: 42px;
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  background: #fffdfa;
+}
+
+.unit-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 20px;
+}
+
+.checkbox-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 10px;
+}
+
+.choice-label,
+.checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 34px;
+}
+
+.progress-text {
+  color: var(--muted);
+  font-weight: 700;
+}
+
+.word-stage {
+  display: grid;
+  min-height: 300px;
+  place-items: center;
+  margin: 28px 0;
+  padding: 32px;
+  border: 1px solid var(--line);
+  background: #fffdfa;
+  text-align: center;
+}
+
+.word-content {
+  display: grid;
+  gap: 16px;
+}
+
+.word-text {
+  font-size: 52px;
+  font-weight: 900;
+  line-height: 1.1;
+  overflow-wrap: anywhere;
+}
+
+.phonetic-text {
+  font-size: 24px;
+  color: var(--accent-strong);
+}
+
+.part-text,
+.meaning-text {
+  font-size: 30px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.empty-state {
+  color: var(--muted);
+}
+
+.answer-table-wrap {
+  width: 100%;
+  overflow-x: auto;
+}
+
+.answer-table {
+  width: 100%;
+  min-width: 620px;
+  border-collapse: collapse;
+  table-layout: fixed;
+  background: #fffdfa;
+}
+
+.answer-table th,
+.answer-table td {
+  border: 1px solid var(--line);
+  padding: 10px 12px;
+  text-align: left;
+  vertical-align: top;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  line-height: 1.45;
+}
+
+.answer-table th {
+  background: rgba(31, 111, 100, 0.1);
+  font-weight: 800;
+}
+
+.answer-table th:first-child,
+.answer-table td:first-child {
+  width: 64px;
+  text-align: center;
+}
+
+.answer-table th:nth-child(2),
+.answer-table td:nth-child(2),
+.answer-table th:nth-child(4),
+.answer-table td:nth-child(4) {
+  width: 22%;
+}
+
+@media (max-width: 720px) {
+  .app-shell {
+    width: 100%;
+    min-height: 100vh;
+    margin: 0;
+    padding: 20px;
+  }
+
+  .unit-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .word-text {
+    font-size: 38px;
+  }
+
+  .answer-table {
+    min-width: 0;
+    font-size: 14px;
+  }
+
+  .answer-table th,
+  .answer-table td {
+    padding: 8px;
+  }
+}

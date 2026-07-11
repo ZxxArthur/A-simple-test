@@ -1,0 +1,8 @@
+node_modules/
+.word-memory-cache/
+*.xlsx
+*.log
+*.tmp
+*.temp
+.DS_Store
+Thumbs.db

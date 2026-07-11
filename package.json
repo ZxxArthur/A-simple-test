@@ -1,0 +1,17 @@
+{
+  "name": "electron-word-memory-tool",
+  "version": "1.0.0",
+  "description": "Electron desktop vocabulary memorization tool",
+  "main": "main.js",
+  "scripts": {
+    "install": "node -e \"console.log('dependencies installed')\"",
+    "start": "electron .",
+    "start:local": "node server-local.js --open",
+    "check": "node --check main.js && node --check excel-parser.js && node --check weight-calc.js && node --check storage.js && node --check page-render.js"
+  },
+  "dependencies": {
+    "electron": "^31.7.7",
+    "node-localstorage": "^3.0.5",
+    "node-xlsx": "^0.24.0"
+  }
+}
