@@ -13,6 +13,7 @@
 | REQ-002A | 支持命令行显式指定 Excel。 | 用户运行 `start-local.ps1 -ExcelPath <path>` 或 `server-local.js --excel <path>`。 | 该路径仅作为显式指定来源；普通启动不自动读取根目录文件。 | `server-local.js`, `start-local.ps1` |
 | REQ-003 | 自定义 Excel 上传后缓存到 `.word-memory-cache/selected-workbook.xlsx`。 | 用户上传文件，系统先验证结构，验证成功后替换缓存并刷新词库。 | 验证失败不得覆盖已有缓存；大于 30MB 的文件拒绝。 | `server-local.js`, `local-app.js` |
 | REQ-003A | 再次启动记住上一次选择。 | 缓存文件存在时，启动后自动读取 `.word-memory-cache/selected-workbook.xlsx`。 | 用户清空缓存后恢复首次选择状态。 | `server-local.js`, `.word-memory-cache` |
+| REQ-003B | 上传 Excel 后支持手动映射 sheet 和字段。 | 用户选择 `.xlsx` 后进入映射页，选择总表/汇总表 sheet，并把 Excel 列对应到 Vocabulary 的单元、英文单词、音标、词性、中文意思。 | 总表 sheet、英文单词、中文意思为必填；汇总表可选择不使用；映射验证失败不得覆盖已有已选词库。 | `server-local.js`, `local-app.js`, `style.css` |
 | REQ-004 | 工作表名不强制固定。 | 系统从 Excel 中选择两张有数据的表，列数较少的按总表逻辑，列数较多的按汇总表逻辑。 | 只有一张表时按总表逻辑；无法找到有效表时提示格式错误。 | `server-local.js`, `excel-parser.js` |
 | REQ-005 | 字段名支持模糊识别和位置兜底。 | 优先匹配 `单词/英文/word`、`中文意思/释义/meaning`、`音标/phonetic`、`词性/pos` 等相似字段。 | 字段名无法识别时，总表按 A/C/D 列，汇总表按 A/C/D/E/F 列兜底；空单词行跳过。 | `server-local.js`, `excel-parser.js` |
 | REQ-006 | 两张表按英文单词去重合并。 | 总表逻辑的英文单词与汇总表逻辑的英文单词匹配为同一个单词。 | 大小写差异按同一单词处理；重复单词只展示一条。 | `server-local.js`, `excel-parser.js` |
@@ -51,17 +52,19 @@
 
 1. 启动：运行 `powershell -ExecutionPolicy Bypass -File .\start-local.ps1`。
 2. 首次选择：无缓存时页面显示 `选择xlsx文件`，随机和单元按钮禁用。
-3. 缓存读取：用户选择有效 Excel 后缓存；下次启动自动读取缓存文件。
-4. 解析：校验工作表和表头，按标准结构解析两张表。
-5. 合并：按英文单词去重，汇总表信息优先。
-6. 学习：用户进入背诵流程并记录知道/不知道状态。
+3. 映射确认：用户选择有效 Excel 后进入字段映射页，确认 sheet 和列对应关系。
+4. 缓存读取：映射导入成功后缓存 Excel 和映射；下次启动自动读取缓存文件。
+5. 解析：按用户映射解析；没有手动映射时使用自动模糊识别和位置兜底。
+6. 合并：按英文单词去重，汇总表信息优先。
+7. 学习：用户进入背诵流程并记录知道/不知道状态。
 
 ## 验证清单
 
 | ID | 检查点 | 期望结果 |
 |---|---|---|
 | TC-001 | 无缓存时启动本地服务。 | 首页显示 `选择xlsx文件` 和 `刷新页面`，背诵功能按钮禁用。 |
-| TC-001A | 选择有效 `.xlsx` 后刷新。 | `/api/workbook` 返回成功，页面启用随机和单元按钮。 |
+| TC-001A | 选择有效 `.xlsx` 后上传。 | 页面进入 `Excel字段映射`，显示总表/汇总表 sheet 下拉和字段下拉。 |
+| TC-001B | 在映射页点击 `按这个映射导入`。 | `/api/workbook` 返回成功，页面启用随机和单元按钮，映射写入 `.word-memory-cache/selected-workbook.json`。 |
 | TC-002 | 两张表名称不是固定名称，但一张列少一张列多。 | 解析成功，列少表进入总表逻辑，列多表进入汇总表逻辑。 |
 | TC-003 | 表头字段存在轻微差异或英文名称。 | 优先按相似字段解析；识别不到时按默认列位置兜底。 |
 | TC-004 | 汇总表单词 `dinosaur`。 | 返回音标 `/ˈdaɪnəsɔː(r)/`、词性 `n.`、中文意思 `恐龙`。 |

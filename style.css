@@ -111,6 +111,26 @@ input {
   background: #fffdfa;
 }
 
+.mapping-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.mapping-field {
+  display: grid;
+  gap: 8px;
+}
+
+.mapping-field span {
+  color: var(--muted);
+  font-weight: 700;
+}
+
+.mapping-field .select-input {
+  width: 100%;
+}
+
 .unit-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -226,6 +246,10 @@ input {
   }
 
   .unit-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .mapping-grid {
     grid-template-columns: 1fr;
   }
 

@@ -8,6 +8,8 @@ const appRoot = document.getElementById('app');
 const state = {
   workbook: null,
   workbookError: '',
+  mappingInspect: null,
+  mappingDraft: null,
   persisted: null,
   currentWords: [],
   currentMode: '',
@@ -66,6 +68,19 @@ async function savePersisted() {
   if (response.ok) {
     state.persisted = payload;
   }
+}
+
+async function apiPostJson(path, body) {
+  const response = await fetch(path, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+  });
+  const payload = await response.json();
+  if (!response.ok) {
+    throw new Error(payload.error || '请求失败');
+  }
+  return payload;
 }
 
 function renderHomePage() {
@@ -134,10 +149,9 @@ async function uploadExcelFile(event) {
     if (!response.ok) {
       throw new Error(payload.error || 'Excel文件读取失败');
     }
-    state.workbook = payload;
-    state.workbookError = '';
-    state.persisted = await apiGet('/api/state');
-    renderHomePage();
+    state.mappingInspect = payload;
+    state.mappingDraft = createDefaultMappingDraft(payload);
+    renderMappingPage();
   } catch (error) {
     alert(error.message);
   } finally {
@@ -145,6 +159,187 @@ async function uploadExcelFile(event) {
     button.textContent = '选择xlsx文件';
     event.target.value = '';
   }
+}
+
+function renderMappingPage() {
+  const inspect = state.mappingInspect;
+  if (!inspect || !inspect.sheets || !inspect.sheets.length) {
+    alert('未找到可映射的工作表');
+    renderHomePage();
+    return;
+  }
+  const draft = state.mappingDraft || createDefaultMappingDraft(inspect);
+  state.mappingDraft = draft;
+  const totalSheet = getInspectSheet(draft.total.sheetName) || inspect.sheets[0];
+  const summarySheet = getInspectSheet(draft.summary.sheetName) || inspect.sheets.find((sheet) => sheet.name !== totalSheet.name) || null;
+  draft.total.sheetName = totalSheet.name;
+  draft.summary.sheetName = summarySheet ? summarySheet.name : '';
+
+  appRoot.innerHTML = `
+    <h1 class="page-title">Excel字段映射</h1>
+    <section class="section">
+      <h2 class="section-title">选择工作表</h2>
+      <div class="mapping-grid">
+        <label class="mapping-field">
+          <span>总表逻辑 sheet</span>
+          <select id="totalSheetSelect" class="select-input">${renderSheetOptions(inspect.sheets, draft.total.sheetName)}</select>
+        </label>
+        <label class="mapping-field">
+          <span>汇总表逻辑 sheet</span>
+          <select id="summarySheetSelect" class="select-input">${renderSheetOptions(inspect.sheets, draft.summary.sheetName, true)}</select>
+        </label>
+      </div>
+    </section>
+    <section class="section">
+      <h2 class="section-title">总表字段</h2>
+      <div class="mapping-grid">
+        ${renderColumnField('总表单元', 'totalUnitIndex', totalSheet, draft.total.unitIndex)}
+        ${renderColumnField('英文单词', 'totalWordIndex', totalSheet, draft.total.wordIndex)}
+        ${renderColumnField('组合释义/中文意思', 'totalMeaningIndex', totalSheet, draft.total.meaningIndex)}
+      </div>
+    </section>
+    <section class="section">
+      <h2 class="section-title">汇总表字段</h2>
+      ${summarySheet ? `
+        <div class="mapping-grid">
+          ${renderColumnField('汇总单元', 'summaryUnitIndex', summarySheet, draft.summary.unitIndex)}
+          ${renderColumnField('英文单词', 'summaryWordIndex', summarySheet, draft.summary.wordIndex)}
+          ${renderColumnField('音标', 'summaryPhoneticIndex', summarySheet, draft.summary.phoneticIndex, true)}
+          ${renderColumnField('词性', 'summaryPartOfSpeechIndex', summarySheet, draft.summary.partOfSpeechIndex, true)}
+          ${renderColumnField('中文意思', 'summaryMeaningIndex', summarySheet, draft.summary.meaningIndex)}
+        </div>
+      ` : '<div class="empty-state">不使用汇总表，只按总表逻辑导入。</div>'}
+    </section>
+    <section class="section">
+      <div class="bottom-actions">
+        <button id="applyMappingButton" class="primary-button" type="button">按这个映射导入</button>
+        <button id="cancelMappingButton" class="secondary-button" type="button">返回首页</button>
+      </div>
+    </section>
+  `;
+
+  document.getElementById('totalSheetSelect').addEventListener('change', handleMappingSheetChange);
+  document.getElementById('summarySheetSelect').addEventListener('change', handleMappingSheetChange);
+  document.getElementById('applyMappingButton').addEventListener('click', submitWorkbookMapping);
+  document.getElementById('cancelMappingButton').addEventListener('click', renderHomePage);
+}
+
+function createDefaultMappingDraft(inspect) {
+  const totalSheet = inspect.sheets.find((sheet) => sheet.name === (inspect.suggested || {}).totalSheetName) || inspect.sheets[0];
+  const summarySheet = inspect.sheets.find((sheet) => sheet.name === (inspect.suggested || {}).summarySheetName) || inspect.sheets.find((sheet) => sheet.name !== totalSheet.name) || null;
+  return {
+    total: createRoleMapping(totalSheet, 'total'),
+    summary: summarySheet ? createRoleMapping(summarySheet, 'summary') : { sheetName: '' }
+  };
+}
+
+function createRoleMapping(sheet, role) {
+  const mapping = role === 'summary' ? sheet.summaryMapping : sheet.totalMapping;
+  if (role === 'summary') {
+    return {
+      sheetName: sheet.name,
+      unitIndex: mapping.unitIndex,
+      wordIndex: mapping.wordIndex,
+      phoneticIndex: mapping.phoneticIndex,
+      partOfSpeechIndex: mapping.partOfSpeechIndex,
+      meaningIndex: mapping.meaningIndex
+    };
+  }
+  return {
+    sheetName: sheet.name,
+    unitIndex: mapping.unitIndex,
+    wordIndex: mapping.wordIndex,
+    meaningIndex: mapping.meaningIndex
+  };
+}
+
+function handleMappingSheetChange() {
+  const totalSheet = getInspectSheet(document.getElementById('totalSheetSelect').value);
+  const summarySheet = getInspectSheet(document.getElementById('summarySheetSelect').value);
+  state.mappingDraft = {
+    total: createRoleMapping(totalSheet, 'total'),
+    summary: summarySheet ? createRoleMapping(summarySheet, 'summary') : { sheetName: '' }
+  };
+  renderMappingPage();
+}
+
+async function submitWorkbookMapping() {
+  const mapping = readMappingForm();
+  if (!mapping.total.sheetName || mapping.total.wordIndex < 0 || mapping.total.meaningIndex < 0) {
+    alert('总表逻辑至少需要选择 sheet、英文单词和中文意思字段');
+    return;
+  }
+  if (mapping.summary.sheetName && (mapping.summary.wordIndex < 0 || mapping.summary.meaningIndex < 0)) {
+    alert('汇总表逻辑至少需要选择英文单词和中文意思字段');
+    return;
+  }
+  const button = document.getElementById('applyMappingButton');
+  button.disabled = true;
+  button.textContent = '正在导入...';
+  try {
+    const workbook = await apiPostJson('/api/workbook-mapping', { mapping });
+    state.workbook = workbook;
+    state.workbookError = '';
+    state.mappingInspect = null;
+    state.mappingDraft = null;
+    state.persisted = await apiGet('/api/state');
+    renderHomePage();
+  } catch (error) {
+    alert(error.message);
+    button.disabled = false;
+    button.textContent = '按这个映射导入';
+  }
+}
+
+function readMappingForm() {
+  return {
+    total: {
+      sheetName: document.getElementById('totalSheetSelect').value,
+      unitIndex: readColumnIndex('totalUnitIndex'),
+      wordIndex: readColumnIndex('totalWordIndex'),
+      meaningIndex: readColumnIndex('totalMeaningIndex')
+    },
+    summary: {
+      sheetName: document.getElementById('summarySheetSelect').value,
+      unitIndex: readColumnIndex('summaryUnitIndex'),
+      wordIndex: readColumnIndex('summaryWordIndex'),
+      phoneticIndex: readColumnIndex('summaryPhoneticIndex'),
+      partOfSpeechIndex: readColumnIndex('summaryPartOfSpeechIndex'),
+      meaningIndex: readColumnIndex('summaryMeaningIndex')
+    }
+  };
+}
+
+function readColumnIndex(id) {
+  const element = document.getElementById(id);
+  return element ? Number(element.value) : -1;
+}
+
+function getInspectSheet(sheetName) {
+  return (state.mappingInspect || {}).sheets.find((sheet) => sheet.name === sheetName);
+}
+
+function renderSheetOptions(sheets, selectedName, includeEmpty = false) {
+  const options = includeEmpty ? ['<option value="">不使用汇总表</option>'] : [];
+  return options.concat(sheets.map((sheet) => `<option value="${escapeHtml(sheet.name)}" ${sheet.name === selectedName ? 'selected' : ''}>${escapeHtml(sheet.name)}（${sheet.columnCount}列）</option>`)).join('');
+}
+
+function renderColumnField(label, id, sheet, selectedIndex, includeEmpty = false) {
+  return `
+    <label class="mapping-field">
+      <span>${escapeHtml(label)}</span>
+      <select id="${id}" class="select-input">${renderColumnOptions(sheet, selectedIndex, includeEmpty)}</select>
+    </label>
+  `;
+}
+
+function renderColumnOptions(sheet, selectedIndex, includeEmpty) {
+  const options = includeEmpty ? ['<option value="-1">不使用</option>'] : [];
+  return options.concat(sheet.columns.map((column) => {
+    const sample = column.sample ? '：' + column.sample : '';
+    const text = '第' + (column.index + 1) + '列 ' + column.label + sample;
+    return `<option value="${column.index}" ${Number(selectedIndex) === column.index ? 'selected' : ''}>${escapeHtml(text)}</option>`;
+  })).join('');
 }
 
 async function startRandomFlow() {

@@ -12,6 +12,8 @@ const args = parseArgs(process.argv.slice(2));
 const defaultExcelFile = args.excel || process.env.VOCAB_EXCEL_FILE ? path.resolve(args.excel || process.env.VOCAB_EXCEL_FILE) : '';
 const selectedExcelFile = path.join(cacheDir, 'selected-workbook.xlsx');
 const selectedExcelMetaFile = path.join(cacheDir, 'selected-workbook.json');
+const pendingExcelFile = path.join(cacheDir, 'pending-workbook.xlsx');
+const pendingExcelMetaFile = path.join(cacheDir, 'pending-workbook.json');
 const host = '127.0.0.1';
 const startPort = Number(args.port || process.env.VOCAB_PORT || 3765);
 const defaultOnly = args['default-only'] === true || process.env.VOCAB_DEFAULT_EXCEL_ONLY === '1';
@@ -75,7 +77,7 @@ function isObject(value) {
 
 function loadWorkbook() {
   const activeExcel = getActiveExcel();
-  return buildWorkbook(activeExcel.filePath, activeExcel.displayName);
+  return buildWorkbook(activeExcel.filePath, activeExcel.displayName, activeExcel.mapping);
 }
 
 function getActiveExcel() {
@@ -83,7 +85,8 @@ function getActiveExcel() {
   if (!defaultOnly && fs.existsSync(selectedExcelFile)) {
     return {
       filePath: selectedExcelFile,
-      displayName: selectedMeta.originalName ? selectedMeta.originalName + '（自定义文件）' : selectedExcelFile
+      displayName: selectedMeta.originalName ? selectedMeta.originalName + '（自定义文件）' : selectedExcelFile,
+      mapping: selectedMeta.mapping
     };
   }
   return {
@@ -92,7 +95,7 @@ function getActiveExcel() {
   };
 }
 
-function buildWorkbook(excelFile, displayName) {
+function buildWorkbook(excelFile, displayName, mapping = null) {
   if (!excelFile) {
     throw new Error('请选择xlsx文件');
   }
@@ -102,15 +105,21 @@ function buildWorkbook(excelFile, displayName) {
   const workbook = parseXlsx(excelFile);
   let totalRows;
   let summaryRows;
-  const sheetEntries = getWorkbookSheetEntries(workbook);
-  if (sheetEntries.length >= 2) {
+  if (isObject(mapping) && mapping.total && mapping.total.sheetName) {
+    const mappedRows = parseMappedWorkbook(workbook, mapping);
+    totalRows = mappedRows.totalRows;
+    summaryRows = mappedRows.summaryRows;
+  } else {
+    const sheetEntries = getWorkbookSheetEntries(workbook);
+    if (sheetEntries.length >= 2) {
     const selectedSheets = selectWorkbookSheets(sheetEntries);
     totalRows = parseTotalRows(selectedSheets.total.rows, selectedSheets.total.totalMapping);
     summaryRows = parseSummaryRows(selectedSheets.summary.rows, selectedSheets.summary.summaryMapping);
-  } else {
+    } else {
     const fallbackRows = sheetEntries[0] ? sheetEntries[0].rows : getSingleSheetRows(workbook);
     totalRows = parseTotalRows(fallbackRows);
     summaryRows = [];
+    }
   }
 
   const words = mergeWords(totalRows, summaryRows);
@@ -126,6 +135,86 @@ function buildWorkbook(excelFile, displayName) {
     totalUnits: uniqueNonEmpty(totalRows.map((row) => row.unit)),
     summaryUnits: uniqueNonEmpty(summaryRows.map((row) => row.unit || row.word.charAt(0).toUpperCase()))
   };
+}
+
+function parseMappedWorkbook(workbook, mapping) {
+  const totalSheet = workbook.sheets[mapping.total.sheetName];
+  if (!totalSheet) {
+    throw new Error('映射错误：找不到总表工作表 ' + mapping.total.sheetName);
+  }
+  const summarySheet = mapping.summary && mapping.summary.sheetName ? workbook.sheets[mapping.summary.sheetName] : null;
+  if (mapping.summary && mapping.summary.sheetName && !summarySheet) {
+    throw new Error('映射错误：找不到汇总表工作表 ' + mapping.summary.sheetName);
+  }
+  return {
+    totalRows: parseTotalRows(totalSheet, normalizeMapping(mapping.total, 'total')),
+    summaryRows: summarySheet ? parseSummaryRows(summarySheet, normalizeMapping(mapping.summary, 'summary')) : []
+  };
+}
+
+function normalizeMapping(rawMapping, role) {
+  const normalized = {
+    unitIndex: toColumnIndex(rawMapping.unitIndex),
+    wordIndex: toColumnIndex(rawMapping.wordIndex),
+    meaningIndex: toColumnIndex(rawMapping.meaningIndex)
+  };
+  if (role === 'summary') {
+    normalized.phoneticIndex = toColumnIndex(rawMapping.phoneticIndex);
+    normalized.partOfSpeechIndex = toColumnIndex(rawMapping.partOfSpeechIndex);
+  }
+  return normalized;
+}
+
+function toColumnIndex(value) {
+  const number = Number(value);
+  return Number.isInteger(number) && number >= 0 ? number : -1;
+}
+
+function inspectWorkbook(excelFile, originalName) {
+  const workbook = parseXlsx(excelFile);
+  const sheets = Object.entries(workbook.sheets).map(([name, rows]) => {
+    const columnCount = getEffectiveColumnCount(rows);
+    return {
+      name,
+      columnCount,
+      columns: createColumnOptions(rows, columnCount),
+      totalMapping: inferSheetMapping(rows, 'total'),
+      summaryMapping: inferSheetMapping(rows, 'summary')
+    };
+  }).filter((sheet) => sheet.columnCount >= 1);
+  const selectable = getWorkbookSheetEntries(workbook);
+  let suggested = null;
+  if (selectable.length >= 2) {
+    const selectedSheets = selectWorkbookSheets(selectable);
+    suggested = {
+      totalSheetName: selectedSheets.total.name,
+      summarySheetName: selectedSheets.summary.name
+    };
+  } else if (selectable.length === 1) {
+    suggested = {
+      totalSheetName: selectable[0].name,
+      summarySheetName: ''
+    };
+  }
+  return {
+    mappingRequired: true,
+    originalName,
+    sheets,
+    suggested
+  };
+}
+
+function createColumnOptions(rows, columnCount) {
+  const headers = rows[0] || [];
+  return Array.from({ length: columnCount }, (_, index) => {
+    const header = normalize(headers[index]);
+    const samples = rows.slice(1, 4).map((row) => normalize(row[index])).filter(Boolean);
+    return {
+      index,
+      label: header || '第' + (index + 1) + '列',
+      sample: samples.join(' / ')
+    };
+  });
 }
 
 function getSingleSheetRows(workbook) {
@@ -641,11 +730,48 @@ const server = http.createServer(async (request, response) => {
       ensureCacheDir();
       const originalName = getUploadFileName(request);
       const uploadBuffer = await readRawBody(request);
-      const tempFile = path.join(cacheDir, 'selected-workbook-upload.xlsx');
-      fs.writeFileSync(tempFile, uploadBuffer);
+      fs.writeFileSync(pendingExcelFile, uploadBuffer);
+      writeJson(pendingExcelMetaFile, {
+        originalName,
+        uploadedAt: new Date().toISOString()
+      });
+      sendJson(response, 200, inspectWorkbook(pendingExcelFile, originalName));
+      return;
+    }
+    if (request.method === 'POST' && parsedUrl.pathname === '/api/workbook-mapping') {
+      if (!fs.existsSync(pendingExcelFile)) {
+        sendJson(response, 400, { error: '请先选择xlsx文件' });
+        return;
+      }
+      const body = await readBody(request);
+      const pendingMeta = readJson(pendingExcelMetaFile, {});
+      const originalName = pendingMeta.originalName || '自定义词库.xlsx';
+      const mapping = body.mapping || body;
+      const workbook = buildWorkbook(pendingExcelFile, originalName + '（自定义文件）', mapping);
+      fs.copyFileSync(pendingExcelFile, selectedExcelFile);
+      writeJson(selectedExcelMetaFile, {
+        originalName,
+        mapping,
+        selectedAt: new Date().toISOString()
+      });
+      if (fs.existsSync(pendingExcelFile)) {
+        fs.unlinkSync(pendingExcelFile);
+      }
+      if (fs.existsSync(pendingExcelMetaFile)) {
+        fs.unlinkSync(pendingExcelMetaFile);
+      }
+      ensureFirstUnselected(workbook.words);
+      sendJson(response, 200, workbook);
+      return;
+    }
+    if (request.method === 'POST' && parsedUrl.pathname === '/api/workbook-file-auto') {
+      ensureCacheDir();
+      const originalName = getUploadFileName(request);
+      const uploadBuffer = await readRawBody(request);
+      fs.writeFileSync(pendingExcelFile, uploadBuffer);
       try {
-        const workbook = buildWorkbook(tempFile, originalName + '（自定义文件）');
-        fs.copyFileSync(tempFile, selectedExcelFile);
+        const workbook = buildWorkbook(pendingExcelFile, originalName + '（自定义文件）');
+        fs.copyFileSync(pendingExcelFile, selectedExcelFile);
         writeJson(selectedExcelMetaFile, {
           originalName,
           selectedAt: new Date().toISOString()
@@ -653,8 +779,8 @@ const server = http.createServer(async (request, response) => {
         ensureFirstUnselected(workbook.words);
         sendJson(response, 200, workbook);
       } finally {
-        if (fs.existsSync(tempFile)) {
-          fs.unlinkSync(tempFile);
+        if (fs.existsSync(pendingExcelFile)) {
+          fs.unlinkSync(pendingExcelFile);
         }
       }
       return;

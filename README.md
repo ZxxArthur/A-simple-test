@@ -46,6 +46,8 @@ powershell -ExecutionPolicy Bypass -File .\start-local.ps1
 
 该入口启动 `http://127.0.0.1:3765/`，首次启动不提供默认词库，需要在页面点击 `选择xlsx文件` 选择本地 Excel。
 选择后的文件会缓存到 `.word-memory-cache`，下次启动继续使用上一次选择的词库。
+选择 Excel 后会先进入字段映射页面，可手动选择哪张 sheet 作为总表/汇总表，并把 Excel 列对应到 Vocabulary 的单元、英文单词、音标、词性、中文意思等字段。
+确认映射后才会导入词库；映射会跟随该 Excel 一起缓存，下次启动继续使用。
 由于 `.xlsx` 文件不会上传 GitHub，从 GitHub 下载代码后第一次启动也会进入选择文件状态。
 
 如确实需要从命令行指定某个 Excel，可传入 `-ExcelPath`：
@@ -63,6 +65,8 @@ powershell -ExecutionPolicy Bypass -File .\start-local.ps1 -ExcelPath .\Vocabula
 
 - 总表逻辑：第 1 列作为单元，第 3 列作为英文单词，第 4 列作为组合释义。
 - 汇总表逻辑：第 1 列作为单元，第 3 列作为英文单词，第 4/5/6 列作为音标/词性/中文意思。
+
+本地浏览器版上传 Excel 后会显示自动建议的 sheet 和字段映射。若实际文件结构不同，可在页面下拉框中改成正确 sheet 和列；汇总表可选择“不使用汇总表”。
 
 单词按英文文本去重合并。两张表同时存在同一英文单词时，展示信息优先使用汇总表逻辑里的音标、词性、中文意思。`Page` 和 `总表里有` 这类辅助列不参与单词字段解析。
 
